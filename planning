@@ -1,1 +1,21 @@
+Topic / Genre:
+ - Shooting Game with armadilo models (3D)
+ - 
 
+1. Shooting Game + Armadilo
+Model: the one from last year done by Will
+Multiplayer Connection: Peer to Peer
+Basics:
+  1. Gun
+  2. Simple Movement (WASD, JUMP, possible ROLL)
+  3. Mode 
+    a) Group of friends vs Zombies
+    b) FFA
+
+Environment:
+  1. Plain: Just a flat ground (green = grass)
+  2. City: Buildings + trees + cars
+  3. Forest: trees + caves
+  4. Olympus: Colosseum in the clouds (optional)
+
+**Add if needed later

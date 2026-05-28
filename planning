@@ -18,4 +18,12 @@ Environment:
   3. Forest: trees + caves
   4. Olympus: Colosseum in the clouds (optional)
 
+DEVELOPMENT PLAN:
+  1. Armadillo basic movement around the map (singular, 1-2 days)
+  2. Armadillo's syncing in movement together from different PCs (test the networking, make sure syncing works, day 3-4)
+  3. Shooting sync (damage from guns, day 3-4)
+  4. Zombie mode (zombie spawners, zombie AI, days 5-6)
+  5. Maps other than plain (day 7-8)
+  6. If time allows: FFA
+
 **Add if needed later

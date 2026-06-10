@@ -46,3 +46,11 @@ Ammo box ✅
 Medkit✅
 Street lamp✅
 Furniture (table, chair, couch, TV, lockers, other if needed)
+
+
+Gameplay features:
+- Start with melee weapon and search around the map for guns, ammo, and medkits if needed
+- Map including city, forest, plains, and colloseum
+- Zombies spawning if out of player's FOV, not in building, and at least 25 meters away
+- Barricades and building sieges
+- LAN co-op

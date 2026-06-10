@@ -36,12 +36,12 @@ Possible game names:
 
 3D models to make:
 AK-47 ✅
-Pistol
-Knife or crowbar (melee)
+Pistol ✅
+Knife or crowbar (melee) ✅
 One zombie model ✅
 Three building types ✅
-Crate
-Car
+Crate ✅
+Car (3 types: car, truck, van)
 Ammo box
 Medkit
 Street lamp

@@ -54,3 +54,6 @@ Gameplay features:
 - Zombies spawning if out of player's FOV, not in building, and at least 25 meters away
 - Barricades and building sieges
 - LAN co-op
+
+Map:
+City in the center, surrounded by forest to the north, plains to the south. Includes possibly a colliseum as an enterable building

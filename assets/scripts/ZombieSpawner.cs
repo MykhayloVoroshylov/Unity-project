@@ -1,5 +1,6 @@
 using UnityEngine;
-using UnityEngine.AI; // Required if you use NavMesh later
+using UnityEngine.AI;
+using UnityEngine.Pool;
 
 public class ZombieSpawner : MonoBehaviour
 {
@@ -7,15 +8,32 @@ public class ZombieSpawner : MonoBehaviour
     public GameObject zombiePrefab;
     public float spawnIntervalMin = 10f;
     public float spawnIntervalMax = 20f;
-    public float minPlayerDistance = 25f;
-    public float maxSpawnDistance = 45f;
+    public float minPlayerDistance = 20f;
+    public float maxSpawnDistance = 50f;
+
+    [Header("Spawn Tuning")]
+    [Tooltip("Zombies won't spawn within this many seconds of being in view — prevents pop-in without blocking spawns entirely")]
+    public float viewCooldown = 3f;
+    public int maxZombies = 20; // WebGL cap — important
 
     [Header("Players")]
     public Transform[] players;
-    // Cache the cameras right next to the players to save CPU power
-    private Camera[] playerCameras; 
+    private Camera[] playerCameras;
 
     private float spawnTimer;
+    private int currentZombieCount = 0;
+    private ObjectPool<GameObject> zombiePool;
+
+    void Awake()
+    {
+        zombiePool = new ObjectPool<GameObject>(
+            createFunc: () => Instantiate(zombiePrefab),
+            actionOnGet: obj => obj.SetActive(true),
+            actionOnRelease: obj => obj.SetActive(false),
+            actionOnDestroy: obj => Destroy(obj),
+            maxSize: maxZombies
+        );
+    }
 
     void Start()
     {
@@ -23,123 +41,129 @@ public class ZombieSpawner : MonoBehaviour
         CachePlayerCameras();
     }
 
-    // Call this whenever a player joins or leaves to update the camera cache
     public void CachePlayerCameras()
     {
         if (players == null) return;
         playerCameras = new Camera[players.Length];
         for (int i = 0; i < players.Length; i++)
-        {
             if (players[i] != null)
-            {
                 playerCameras[i] = players[i].GetComponentInChildren<Camera>();
-            }
-        }
+    }
+
+    // Call this from your zombie's death/despawn logic
+    public void ReturnZombie(GameObject zombie)
+    {
+        currentZombieCount--;
+        zombiePool.Release(zombie);
     }
 
     void Update()
     {
         spawnTimer -= Time.deltaTime;
-
         if (spawnTimer <= 0f)
         {
-            SpawnZombie();
+            TrySpawn();
             ResetTimer();
         }
     }
 
-    void ResetTimer()
-    {
-        spawnTimer = Random.Range(spawnIntervalMin, spawnIntervalMax);
-    }
+    void ResetTimer() => spawnTimer = Random.Range(spawnIntervalMin, spawnIntervalMax);
 
-    void SpawnZombie()
+    void TrySpawn()
     {
         if (players == null || players.Length == 0) return;
+        if (currentZombieCount >= maxZombies) return; // WebGL: hard cap
 
-        // Pick a random player index
-        int targetIndex = Random.Range(0, players.Length);
-        Transform player = players[targetIndex];
-
-        // Edge Case: Player disconnected/died mid-game
-        if (player == null) return; 
-
-        for (int attempts = 0; attempts < 10; attempts++)
+        // Try each player as a spawn anchor, in random order
+        int[] order = RandomOrder(players.Length);
+        foreach (int i in order)
         {
-            Vector3 spawnPos = GenerateSpawnPosition(player);
-
-            if (IsValidSpawn(spawnPos, player, targetIndex))
+            if (players[i] == null) continue;
+            Vector3 pos;
+            if (TryGetSpawnPosition(players[i], out pos))
             {
-                // WebGL Optimization Reminder: Replace this with Object Pooling later!
-                Instantiate(zombiePrefab, spawnPos, Quaternion.identity);
+                GameObject zombie = zombiePool.Get();
+                zombie.transform.SetPositionAndRotation(pos, Quaternion.identity);
+                currentZombieCount++;
                 return;
             }
         }
     }
 
-    Vector3 GenerateSpawnPosition(Transform player)
+    bool TryGetSpawnPosition(Transform anchor, out Vector3 result)
     {
-        float angle = Random.Range(0f, 360f);
-        float distance = Random.Range(minPlayerDistance, maxSpawnDistance);
+        for (int attempt = 0; attempt < 15; attempt++)
+        {
+            // Use a random direction on the XZ plane
+            Vector2 circle = Random.insideUnitCircle.normalized;
+            float distance = Random.Range(minPlayerDistance, maxSpawnDistance);
+            Vector3 candidate = anchor.position + new Vector3(circle.x, 0f, circle.y) * distance;
 
-        Vector3 offset = new Vector3(
-            Mathf.Cos(angle * Mathf.Deg2Rad),
-            0f,
-            Mathf.Sin(angle * Mathf.Deg2Rad)
-        ) * distance;
+            // NavMesh snap — required for non-flat terrain
+            NavMeshHit hit;
+            if (!NavMesh.SamplePosition(candidate, out hit, 5f, NavMesh.AllAreas))
+                continue; // Not on walkable ground, skip
 
-        Vector3 spawnPos = player.position + offset;
-        
-        // Better than forcing Y=0: Keep it relative to the player's ground level
-        spawnPos.y = player.position.y; 
+            candidate = hit.position;
 
-        // Optional NavMesh Snap (Highly recommended for WebGL to avoid wall glitches)
-        /*
-        NavMeshHit hit;
-        if (NavMesh.SamplePosition(spawnPos, out hit, 5f, NavMesh.AllAreas)) {
-            spawnPos = hit.position;
+            if (!IsTooCloseToAnyPlayer(candidate) && !IsVisibleToAllPlayers(candidate))
+            {
+                result = candidate;
+                return true;
+            }
         }
-        */
-
-        return spawnPos;
+        result = Vector3.zero;
+        return false;
     }
 
-    bool IsValidSpawn(Vector3 spawnPos, Transform targetPlayer, int playerIndex)
+    bool IsTooCloseToAnyPlayer(Vector3 pos)
     {
-        // Check if the chosen player can see the spawn point
-        // if (IsInView(playerIndex, spawnPos)) return false;
+        foreach (Transform p in players)
+        {
+            if (p == null) continue;
+            if (Vector3.Distance(p.position, pos) < minPlayerDistance)
+                return true;
+        }
+        return false;
+    }
 
-        // Check distance against ALL existing players
+    // Only block spawn if ALL players can see it — one player looking doesn't lock the whole map
+    bool IsVisibleToAllPlayers(Vector3 pos)
+    {
+        int visibleCount = 0;
+        int aliveCount = 0;
+
         for (int i = 0; i < players.Length; i++)
         {
-            Transform otherPlayer = players[i];
-            
-            // Edge Case: Skip dead/disconnected players
-            if (otherPlayer == null) continue; 
-
-            if (Vector3.Distance(otherPlayer.position, spawnPos) < minPlayerDistance)
-                return false;
-            
-            // Co-op Edge Case: Ensure another player isn't looking at this spot!
-            if (IsInView(i, spawnPos)) return false;
+            if (players[i] == null) continue;
+            aliveCount++;
+            if (IsInView(i, pos)) visibleCount++;
         }
 
-        return true;
+        // Only truly blocked if every living player is watching this spot
+        return aliveCount > 0 && visibleCount == aliveCount;
     }
 
     bool IsInView(int playerIndex, Vector3 point)
     {
-        // Safe check if camera cache is missing
         if (playerCameras == null || playerIndex >= playerCameras.Length) return false;
         Camera cam = playerCameras[playerIndex];
         if (cam == null) return false;
 
-        Vector3 viewportPoint = cam.WorldToViewportPoint(point);
+        Vector3 vp = cam.WorldToViewportPoint(point);
+        return vp.z > 0 && vp.x > 0.1f && vp.x < 0.9f && vp.y > 0.1f && vp.y < 0.9f;
+        // Slightly inset (0.1) so screen edges don't count — reduces edge cases
+    }
 
-        bool inFront = viewportPoint.z > 0;
-        bool inScreen = viewportPoint.x > 0 && viewportPoint.x < 1 &&
-                        viewportPoint.y > 0 && viewportPoint.y < 1;
-
-        return inFront && inScreen;
+    int[] RandomOrder(int count)
+    {
+        int[] arr = new int[count];
+        for (int i = 0; i < count; i++) arr[i] = i;
+        for (int i = count - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            (arr[i], arr[j]) = (arr[j], arr[i]);
+        }
+        return arr;
     }
 }

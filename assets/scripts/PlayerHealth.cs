@@ -1,39 +1,48 @@
 using UnityEngine;
+using Unity.Netcode;
 
-public class PlayerHealth : MonoBehaviour
+public class PlayerHealth : NetworkBehaviour 
 {
     public int maxHealth = 100;
-    private int currentHealth;
+    
+    // Automatically syncs health values from Host/Server -> all connected Clients
+    public NetworkVariable<int> currentHealth = new NetworkVariable<int>(
+        100, 
+        NetworkVariableReadPermission.Everyone, 
+        NetworkVariableWritePermission.Server
+    );
 
-    void Start()
+    public override void OnNetworkSpawn() 
     {
-        currentHealth = maxHealth;
+        if (IsServer) 
+        {
+            currentHealth.Value = maxHealth;
+        }
+        // Listen dynamically for updates to safely execute local UI changes
+        currentHealth.OnValueChanged += OnHealthChanged;
     }
 
-    public void TakeDamage(int damage)
+    private void OnHealthChanged(int oldVal, int newVal) 
     {
-        Debug.Log("Player took damage!");
-
-        currentHealth -= damage;
-
-        if (currentHealth < 0)
-        {
-            currentHealth = 0;
-        }
-
-        Debug.Log("Player HP: " + currentHealth + "/" + maxHealth);
-
-        if (currentHealth == 0)
+        Debug.Log("Player HP updated: " + newVal + "/" + maxHealth);
+        if (newVal <= 0) 
         {
             Die();
         }
     }
 
-    void Die()
+    public void TakeDamage(int damage) 
     {
-        Debug.Log("Player Died");
-        // Later:
-        // Respawn player
-        // Load game over screen
+        // Only the Server is authorized to compute damage calculations
+        if (!IsServer) return;
+
+        currentHealth.Value -= damage;
+        if (currentHealth.Value < 0) currentHealth.Value = 0;
+    }
+
+    void Die() 
+    {
+        Debug.Log("Player has died.");
+        // Add your respawn or game over overlay logic here
     }
 }

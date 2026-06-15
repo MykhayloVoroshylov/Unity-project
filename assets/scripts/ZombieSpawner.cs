@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.Pool;
+using System.Collections.Generic;
 
 public class ZombieSpawner : MonoBehaviour
 {
@@ -24,11 +25,29 @@ public class ZombieSpawner : MonoBehaviour
     private int currentZombieCount = 0;
     private ObjectPool<GameObject> zombiePool;
 
+    // Track cooldown timers for positions recently seen by players
+    private Dictionary<Vector3, float> activeViewCooldowns = new Dictionary<Vector3, float>();
+    private List<Vector3> cooldownKeysToClean = new List<Vector3>();
+
     void Awake()
     {
         zombiePool = new ObjectPool<GameObject>(
-            createFunc: () => Instantiate(zombiePrefab),
-            actionOnGet: obj => obj.SetActive(true),
+            createFunc: () => {
+                GameObject z = Instantiate(zombiePrefab);
+                // Ensure the zombie knows who its spawner is so it can return itself on death
+                var zombieHealth = z.GetComponent<ZombieHealth>();
+                if (zombieHealth != null)
+                {
+                    zombieHealth.AssignSpawner(this);
+                }
+                return z;
+            },
+            actionOnGet: obj => {
+                obj.SetActive(true);
+                // Reset zombie state here (e.g., health, navmesh agent path)
+                var zombieHealth = obj.GetComponent<ZombieHealth>();
+                if (zombieHealth != null) zombieHealth.ResetZombie();
+            },
             actionOnRelease: obj => obj.SetActive(false),
             actionOnDestroy: obj => Destroy(obj),
             maxSize: maxZombies
@@ -59,12 +78,16 @@ public class ZombieSpawner : MonoBehaviour
 
     void Update()
     {
+        // Handle spawn timing
         spawnTimer -= Time.deltaTime;
         if (spawnTimer <= 0f)
         {
             TrySpawn();
             ResetTimer();
         }
+
+        // Process and tick down the position look cooldowns
+        UpdateCooldowns();
     }
 
     void ResetTimer() => spawnTimer = Random.Range(spawnIntervalMin, spawnIntervalMax);
@@ -83,7 +106,18 @@ public class ZombieSpawner : MonoBehaviour
             if (TryGetSpawnPosition(players[i], out pos))
             {
                 GameObject zombie = zombiePool.Get();
-                zombie.transform.SetPositionAndRotation(pos, Quaternion.identity);
+                
+                // Set position smoothly via NavMeshAgent if present to avoid breaking positioning
+                NavMeshAgent agent = zombie.GetComponent<NavMeshAgent>();
+                if (agent != null)
+                {
+                    agent.Warp(pos);
+                }
+                else
+                {
+                    zombie.transform.SetPositionAndRotation(pos, Quaternion.identity);
+                }
+
                 currentZombieCount++;
                 return;
             }
@@ -106,7 +140,7 @@ public class ZombieSpawner : MonoBehaviour
 
             candidate = hit.position;
 
-            if (!IsTooCloseToAnyPlayer(candidate) && !IsVisibleToAllPlayers(candidate))
+            if (!IsTooCloseToAnyPlayer(candidate) && !IsVisibleToAllPlayers(candidate) && !IsPositionTimedOut(candidate))
             {
                 result = candidate;
                 return true;
@@ -137,7 +171,12 @@ public class ZombieSpawner : MonoBehaviour
         {
             if (players[i] == null) continue;
             aliveCount++;
-            if (IsInView(i, pos)) visibleCount++;
+            if (IsInView(i, pos))
+            {
+                visibleCount++;
+                // Track this location as seen to initiate a temporary cooldown window
+                RegisterPositionCooldown(pos);
+            }
         }
 
         // Only truly blocked if every living player is watching this spot
@@ -153,6 +192,46 @@ public class ZombieSpawner : MonoBehaviour
         Vector3 vp = cam.WorldToViewportPoint(point);
         return vp.z > 0 && vp.x > 0.1f && vp.x < 0.9f && vp.y > 0.1f && vp.y < 0.9f;
         // Slightly inset (0.1) so screen edges don't count — reduces edge cases
+    }
+
+    void RegisterPositionCooldown(Vector3 pos)
+    {
+        // Uses simple position approximation to block nearby zones
+        Vector3 key = SnapToGrid(pos);
+        activeViewCooldowns[key] = viewCooldown;
+    }
+
+    bool IsPositionTimedOut(Vector3 pos)
+    {
+        Vector3 key = SnapToGrid(pos);
+        return activeViewCooldowns.ContainsKey(key);
+    }
+
+    void UpdateCooldowns()
+    {
+        cooldownKeysToClean.Clear();
+        
+        // Loop through and decay our structural look thresholds
+        var keys = new List<Vector3>(activeViewCooldowns.Keys);
+        foreach (var key in keys)
+        {
+            activeViewCooldowns[key] -= Time.deltaTime;
+            if (activeViewCooldowns[key] <= 0)
+            {
+                cooldownKeysToClean.Add(key);
+            }
+        }
+
+        foreach (var key in cooldownKeysToClean)
+        {
+            activeViewCooldowns.Remove(key);
+        }
+    }
+
+    Vector3 SnapToGrid(Vector3 pos)
+    {
+        // Snaps checking to a 3-unit grid scale so small deviations are still covered by the cooldown
+        return new Vector3(Mathf.Round(pos.x / 3f) * 3f, Mathf.Round(pos.y / 3f) * 3f, Mathf.Round(pos.z / 3f) * 3f);
     }
 
     int[] RandomOrder(int count)

@@ -1,248 +1,58 @@
+using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.AI;
-using UnityEngine.Pool;
-using System.Collections.Generic;
 
 public class ZombieSpawner : MonoBehaviour
 {
-    [Header("Zombie Settings")]
     public GameObject zombiePrefab;
     public float spawnIntervalMin = 10f;
     public float spawnIntervalMax = 20f;
-    public float minPlayerDistance = 20f;
-    public float maxSpawnDistance = 50f;
-
-    [Header("Spawn Tuning")]
-    [Tooltip("Zombies won't spawn within this many seconds of being in view — prevents pop-in without blocking spawns entirely")]
-    public float viewCooldown = 3f;
-    public int maxZombies = 20; // WebGL cap — important
-
-    [Header("Players")]
-    public Transform[] players;
-    private Camera[] playerCameras;
+    public int maxZombies = 20;
 
     private float spawnTimer;
-    private int currentZombieCount = 0;
-    private ObjectPool<GameObject> zombiePool;
-
-    // Track cooldown timers for positions recently seen by players
-    private Dictionary<Vector3, float> activeViewCooldowns = new Dictionary<Vector3, float>();
-    private List<Vector3> cooldownKeysToClean = new List<Vector3>();
-
-    void Awake()
-    {
-        zombiePool = new ObjectPool<GameObject>(
-            createFunc: () => {
-                GameObject z = Instantiate(zombiePrefab);
-                // Ensure the zombie knows who its spawner is so it can return itself on death
-                var zombieHealth = z.GetComponent<ZombieHealth>();
-                if (zombieHealth != null)
-                {
-                    zombieHealth.AssignSpawner(this);
-                }
-                return z;
-            },
-            actionOnGet: obj => {
-                obj.SetActive(true);
-                // Reset zombie state here (e.g., health, navmesh agent path)
-                var zombieHealth = obj.GetComponent<ZombieHealth>();
-                if (zombieHealth != null) zombieHealth.ResetZombie();
-            },
-            actionOnRelease: obj => obj.SetActive(false),
-            actionOnDestroy: obj => Destroy(obj),
-            maxSize: maxZombies
-        );
-    }
+    private int currentZombieCount;
 
     void Start()
     {
-        ResetTimer();
-        CachePlayerCameras();
-    }
-
-    public void CachePlayerCameras()
-    {
-        if (players == null) return;
-        playerCameras = new Camera[players.Length];
-        for (int i = 0; i < players.Length; i++)
-            if (players[i] != null)
-                playerCameras[i] = players[i].GetComponentInChildren<Camera>();
-    }
-
-    // Call this from your zombie's death/despawn logic
-    public void ReturnZombie(GameObject zombie)
-    {
-        currentZombieCount--;
-        zombiePool.Release(zombie);
+        spawnTimer = Random.Range(spawnIntervalMin, spawnIntervalMax);
     }
 
     void Update()
     {
-        // Handle spawn timing
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+
         spawnTimer -= Time.deltaTime;
-        if (spawnTimer <= 0f)
-        {
-            TrySpawn();
-            ResetTimer();
-        }
+        if (spawnTimer > 0f) return;
 
-        // Process and tick down the position look cooldowns
-        UpdateCooldowns();
+        TrySpawn();
+        spawnTimer = Random.Range(spawnIntervalMin, spawnIntervalMax);
     }
-
-    void ResetTimer() => spawnTimer = Random.Range(spawnIntervalMin, spawnIntervalMax);
 
     void TrySpawn()
     {
-        if (players == null || players.Length == 0) return;
-        if (currentZombieCount >= maxZombies) return; // WebGL: hard cap
+        if (currentZombieCount >= maxZombies) return;
 
-        // Try each player as a spawn anchor, in random order
-        int[] order = RandomOrder(players.Length);
-        foreach (int i in order)
-        {
-            if (players[i] == null) continue;
-            Vector3 pos;
-            if (TryGetSpawnPosition(players[i], out pos))
-            {
-                GameObject zombie = zombiePool.Get();
-                
-                // Set position smoothly via NavMeshAgent if present to avoid breaking positioning
-                NavMeshAgent agent = zombie.GetComponent<NavMeshAgent>();
-                if (agent != null)
-                {
-                    agent.Warp(pos);
-                }
-                else
-                {
-                    zombie.transform.SetPositionAndRotation(pos, Quaternion.identity);
-                }
+        GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
+        if (players.Length == 0) return;
 
-                currentZombieCount++;
-                return;
-            }
-        }
+        Transform randomPlayer = players[Random.Range(0, players.Length)].transform;
+        Vector3 spawnPos = randomPlayer.position + new Vector3(
+            Random.Range(-15f, 15f),
+            0f,
+            Random.Range(-15f, 15f));
+
+        GameObject zombie = Instantiate(zombiePrefab, spawnPos, Quaternion.identity);
+        zombie.GetComponent<NetworkObject>().Spawn();
+
+        ZombieHealth zombieHealth = zombie.GetComponent<ZombieHealth>();
+        if (zombieHealth != null)
+            zombieHealth.AssignSpawner(this);
+
+        currentZombieCount++;
     }
 
-    bool TryGetSpawnPosition(Transform anchor, out Vector3 result)
+    public void ReturnZombie(GameObject zombie)
     {
-        for (int attempt = 0; attempt < 15; attempt++)
-        {
-            // Use a random direction on the XZ plane
-            Vector2 circle = Random.insideUnitCircle.normalized;
-            float distance = Random.Range(minPlayerDistance, maxSpawnDistance);
-            Vector3 candidate = anchor.position + new Vector3(circle.x, 0f, circle.y) * distance;
-
-            // NavMesh snap — required for non-flat terrain
-            NavMeshHit hit;
-            if (!NavMesh.SamplePosition(candidate, out hit, 5f, NavMesh.AllAreas))
-                continue; // Not on walkable ground, skip
-
-            candidate = hit.position;
-
-            if (!IsTooCloseToAnyPlayer(candidate) && !IsVisibleToAllPlayers(candidate) && !IsPositionTimedOut(candidate))
-            {
-                result = candidate;
-                return true;
-            }
-        }
-        result = Vector3.zero;
-        return false;
-    }
-
-    bool IsTooCloseToAnyPlayer(Vector3 pos)
-    {
-        foreach (Transform p in players)
-        {
-            if (p == null) continue;
-            if (Vector3.Distance(p.position, pos) < minPlayerDistance)
-                return true;
-        }
-        return false;
-    }
-
-    // Only block spawn if ALL players can see it — one player looking doesn't lock the whole map
-    bool IsVisibleToAllPlayers(Vector3 pos)
-    {
-        int visibleCount = 0;
-        int aliveCount = 0;
-
-        for (int i = 0; i < players.Length; i++)
-        {
-            if (players[i] == null) continue;
-            aliveCount++;
-            if (IsInView(i, pos))
-            {
-                visibleCount++;
-                // Track this location as seen to initiate a temporary cooldown window
-                RegisterPositionCooldown(pos);
-            }
-        }
-
-        // Only truly blocked if every living player is watching this spot
-        return aliveCount > 0 && visibleCount == aliveCount;
-    }
-
-    bool IsInView(int playerIndex, Vector3 point)
-    {
-        if (playerCameras == null || playerIndex >= playerCameras.Length) return false;
-        Camera cam = playerCameras[playerIndex];
-        if (cam == null) return false;
-
-        Vector3 vp = cam.WorldToViewportPoint(point);
-        return vp.z > 0 && vp.x > 0.1f && vp.x < 0.9f && vp.y > 0.1f && vp.y < 0.9f;
-        // Slightly inset (0.1) so screen edges don't count — reduces edge cases
-    }
-
-    void RegisterPositionCooldown(Vector3 pos)
-    {
-        // Uses simple position approximation to block nearby zones
-        Vector3 key = SnapToGrid(pos);
-        activeViewCooldowns[key] = viewCooldown;
-    }
-
-    bool IsPositionTimedOut(Vector3 pos)
-    {
-        Vector3 key = SnapToGrid(pos);
-        return activeViewCooldowns.ContainsKey(key);
-    }
-
-    void UpdateCooldowns()
-    {
-        cooldownKeysToClean.Clear();
-        
-        // Loop through and decay our structural look thresholds
-        var keys = new List<Vector3>(activeViewCooldowns.Keys);
-        foreach (var key in keys)
-        {
-            activeViewCooldowns[key] -= Time.deltaTime;
-            if (activeViewCooldowns[key] <= 0)
-            {
-                cooldownKeysToClean.Add(key);
-            }
-        }
-
-        foreach (var key in cooldownKeysToClean)
-        {
-            activeViewCooldowns.Remove(key);
-        }
-    }
-
-    Vector3 SnapToGrid(Vector3 pos)
-    {
-        // Snaps checking to a 3-unit grid scale so small deviations are still covered by the cooldown
-        return new Vector3(Mathf.Round(pos.x / 3f) * 3f, Mathf.Round(pos.y / 3f) * 3f, Mathf.Round(pos.z / 3f) * 3f);
-    }
-
-    int[] RandomOrder(int count)
-    {
-        int[] arr = new int[count];
-        for (int i = 0; i < count; i++) arr[i] = i;
-        for (int i = count - 1; i > 0; i--)
-        {
-            int j = Random.Range(0, i + 1);
-            (arr[i], arr[j]) = (arr[j], arr[i]);
-        }
-        return arr;
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+        currentZombieCount = Mathf.Max(0, currentZombieCount - 1);
     }
 }

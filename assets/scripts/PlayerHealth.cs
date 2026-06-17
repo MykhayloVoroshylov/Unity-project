@@ -1,48 +1,53 @@
-using UnityEngine;
 using Unity.Netcode;
+using UnityEngine;
+using UnityEngine.UI;
 
-public class PlayerHealth : NetworkBehaviour 
+public class PlayerHealth : NetworkBehaviour
 {
     public int maxHealth = 100;
-    
-    // Automatically syncs health values from Host/Server -> all connected Clients
+
     public NetworkVariable<int> currentHealth = new NetworkVariable<int>(
-        100, 
-        NetworkVariableReadPermission.Everyone, 
-        NetworkVariableWritePermission.Server
-    );
+        100,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
 
-    public override void OnNetworkSpawn() 
+    [Header("UI Reference")]
+    public Image healthBarFill;
+
+    public override void OnNetworkSpawn()
     {
-        if (IsServer) 
-        {
-            currentHealth.Value = maxHealth;
-        }
-        // Listen dynamically for updates to safely execute local UI changes
+        base.OnNetworkSpawn();
+        if (IsServer) currentHealth.Value = maxHealth;
         currentHealth.OnValueChanged += OnHealthChanged;
+        UpdateHealthBar(currentHealth.Value);
     }
 
-    private void OnHealthChanged(int oldVal, int newVal) 
+    public override void OnNetworkDespawn()
     {
-        Debug.Log("Player HP updated: " + newVal + "/" + maxHealth);
-        if (newVal <= 0) 
-        {
-            Die();
-        }
+        currentHealth.OnValueChanged -= OnHealthChanged;
+        base.OnNetworkDespawn();
     }
 
-    public void TakeDamage(int damage) 
+    void OnHealthChanged(int oldVal, int newVal)
     {
-        // Only the Server is authorized to compute damage calculations
+        UpdateHealthBar(newVal);
+        if (newVal <= 0) Die();
+    }
+
+    public void TakeDamage(int damage)
+    {
         if (!IsServer) return;
-
-        currentHealth.Value -= damage;
-        if (currentHealth.Value < 0) currentHealth.Value = 0;
+        currentHealth.Value = Mathf.Clamp(currentHealth.Value - damage, 0, maxHealth);
     }
 
-    void Die() 
+    void UpdateHealthBar(int health)
     {
-        Debug.Log("Player has died.");
-        // Add your respawn or game over overlay logic here
+        if (healthBarFill != null)
+            healthBarFill.fillAmount = (float)health / maxHealth;
+    }
+
+    void Die()
+    {
+        Debug.Log(gameObject.name + " has died.");
     }
 }

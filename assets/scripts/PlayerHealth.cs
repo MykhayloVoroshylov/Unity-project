@@ -1,39 +1,53 @@
+using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.UI;
 
-public class PlayerHealth : MonoBehaviour
+public class PlayerHealth : NetworkBehaviour
 {
     public int maxHealth = 100;
-    private int currentHealth;
 
-    void Start()
+    public NetworkVariable<int> currentHealth = new NetworkVariable<int>(
+        100,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    [Header("UI Reference")]
+    public Image healthBarFill;
+
+    public override void OnNetworkSpawn()
     {
-        currentHealth = maxHealth;
+        base.OnNetworkSpawn();
+        if (IsServer) currentHealth.Value = maxHealth;
+        currentHealth.OnValueChanged += OnHealthChanged;
+        UpdateHealthBar(currentHealth.Value);
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        currentHealth.OnValueChanged -= OnHealthChanged;
+        base.OnNetworkDespawn();
+    }
+
+    void OnHealthChanged(int oldVal, int newVal)
+    {
+        UpdateHealthBar(newVal);
+        if (newVal <= 0) Die();
     }
 
     public void TakeDamage(int damage)
     {
-        Debug.Log("Player took damage!");
+        if (!IsServer) return;
+        currentHealth.Value = Mathf.Clamp(currentHealth.Value - damage, 0, maxHealth);
+    }
 
-        currentHealth -= damage;
-
-        if (currentHealth < 0)
-        {
-            currentHealth = 0;
-        }
-
-        Debug.Log("Player HP: " + currentHealth + "/" + maxHealth);
-
-        if (currentHealth == 0)
-        {
-            Die();
-        }
+    void UpdateHealthBar(int health)
+    {
+        if (healthBarFill != null)
+            healthBarFill.fillAmount = (float)health / maxHealth;
     }
 
     void Die()
     {
-        Debug.Log("Player Died");
-        // Later:
-        // Respawn player
-        // Load game over screen
+        Debug.Log(gameObject.name + " has died.");
     }
 }

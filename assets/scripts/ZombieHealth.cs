@@ -1,35 +1,41 @@
+using Unity.Netcode;
 using UnityEngine;
 
-public class ZombieHealth : MonoBehaviour
+public class ZombieHealth : NetworkBehaviour
 {
     public int maxHealth = 100;
-    private int currentHealth;
+    public NetworkVariable<int> currentHealth = new NetworkVariable<int>(100, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    void Start()
+    private ZombieSpawner assignedSpawner;
+
+    public void AssignSpawner(ZombieSpawner spawner)
     {
-        currentHealth = maxHealth;
+        assignedSpawner = spawner;
     }
 
-    public void TakeDamage(int damage)
+    public override void OnNetworkSpawn()
     {
-        currentHealth -= damage;
+        base.OnNetworkSpawn();
+        if (IsServer) currentHealth.Value = maxHealth;
+    }
 
-        if (currentHealth < 0)
-        {
-            currentHealth = 0;
-        }
+    public void TakeDamage(int damageAmount)
+    {
+        if (!IsServer) return;
 
-        Debug.Log(gameObject.name + " HP: " + currentHealth + "/" + maxHealth);
+        currentHealth.Value -= damageAmount;
 
-        if (currentHealth == 0)
-        {
+        if (currentHealth.Value <= 0)
             Die();
-        }
     }
 
     void Die()
     {
-        Debug.Log(gameObject.name + " died!");
-        Destroy(gameObject);
+        if (!IsServer) return;
+
+        if (assignedSpawner != null)
+            assignedSpawner.ReturnZombie(gameObject);
+
+        GetComponent<NetworkObject>().Despawn(true);
     }
 }

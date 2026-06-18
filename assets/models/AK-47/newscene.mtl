@@ -1,0 +1,41 @@
+# Exported from Figuro at https://www.figuro.io
+
+newmtl #ff412904
+   d 1
+   Kd 0.2578125 0.1640625 0.01953125
+
+newmtl #ff5e9d9f
+   d 1
+   Kd 0.37109375 0.6171875 0.625
+
+newmtl #ff3f3d3a
+   d 1
+   Kd 0.25 0.2421875 0.23046875
+
+newmtl #ffa8b99c
+   d 1
+   Kd 0.66015625 0.7265625 0.61328125
+
+newmtl #ffb3a6d5
+   d 1
+   Kd 0.703125 0.65234375 0.8359375
+
+newmtl #ff91a0ce
+   d 1
+   Kd 0.5703125 0.62890625 0.80859375
+
+newmtl #ffe99898
+   d 1
+   Kd 0.9140625 0.59765625 0.59765625
+
+newmtl #ff90a2af
+   d 1
+   Kd 0.56640625 0.63671875 0.6875
+
+newmtl #ffefdb81
+   d 1
+   Kd 0.9375 0.859375 0.5078125
+
+newmtl #ff583607
+   d 1
+   Kd 0.34765625 0.21484375 0.03125
